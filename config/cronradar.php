@@ -50,4 +50,19 @@ return [
 
     'grace_period' => env('CRONRADAR_GRACE_PERIOD', 60),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Monitor All Tasks
+    |--------------------------------------------------------------------------
+    |
+    | When enabled, all scheduled tasks are automatically monitored without
+    | needing ->monitor() on each task. Use ->skipMonitor() to opt-out.
+    |
+    | false = Selective mode: Only tasks with ->monitor() are monitored
+    | true = MonitorAll mode: All tasks monitored unless ->skipMonitor()
+    |
+    */
+
+    'monitor_all' => env('CRONRADAR_MONITOR_ALL', false),
+
 ];
