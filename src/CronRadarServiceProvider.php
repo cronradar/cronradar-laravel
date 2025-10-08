@@ -83,25 +83,28 @@ class CronRadarServiceProvider extends ServiceProvider
         Event::macro('detectMonitorKey', function () {
             /** @var \Illuminate\Console\Scheduling\Event $this */
 
-            // Priority 1: Extract from command name
-            if (!empty($this->command)) {
-                return $this->normalizeKey($this->extractCommandName($this->command));
-            }
+            try {
+                // Priority 1: Extract from command name
+                if (!empty($this->command)) {
+                    return $this->normalizeKey($this->extractCommandName($this->command));
+                }
 
-            // Priority 2: Use description if set
-            if (!empty($this->description)) {
-                return $this->normalizeKey($this->description);
-            }
+                // Priority 2: Use description if set
+                if (!empty($this->description)) {
+                    return $this->normalizeKey($this->description);
+                }
 
-            // Priority 3: Generate from callback hash (for closures)
-            if ($this->callback) {
-                $hash = substr(md5(serialize($this->callback)), 0, 8);
-                Log::warning('CronRadar: Closure detected without description. Consider adding ->description("task-name") before ->monitor()');
-                return 'scheduled-task-' . $hash;
-            }
+                // Priority 3: Generate from schedule expression (for closures)
+                if ($this->expression) {
+                    return 'task-' . $this->normalizeKey($this->expression);
+                }
 
-            // Fallback: Unique ID
-            return 'scheduled-task-' . uniqid();
+                // Fallback
+                return 'task-' . substr(md5(uniqid()), 0, 8);
+            } catch (\Throwable $e) {
+                Log::error('CronRadar: Error detecting monitor key: ' . $e->getMessage());
+                return 'task-error-' . substr(md5(uniqid()), 0, 8);
+            }
         });
 
         Event::macro('extractCommandName', function (string $command) {
@@ -153,19 +156,23 @@ class CronRadarServiceProvider extends ServiceProvider
             $this->_cronRadarMonitored = true;
 
             return $this->after(function () use ($customKey) {
-                // Only monitor successful executions
-                if ($this->exitCode !== 0) {
-                    return;
+                try {
+                    // Only monitor successful executions
+                    if ($this->exitCode !== 0) {
+                        return;
+                    }
+
+                    // Auto-detect monitor key if not provided
+                    $monitorKey = $customKey ?? $this->detectMonitorKey();
+
+                    // Extract schedule from event
+                    $schedule = $this->expression ?? null;
+
+                    // Monitor execution
+                    \CronRadar\CronRadar::monitor($monitorKey, $schedule);
+                } catch (\Throwable $e) {
+                    Log::error('CronRadar: Monitor ping failed: ' . $e->getMessage());
                 }
-
-                // Auto-detect monitor key if not provided
-                $monitorKey = $customKey ?? $this->detectMonitorKey();
-
-                // Extract schedule from event
-                $schedule = $this->expression ?? null;
-
-                // Monitor execution
-                \CronRadar\CronRadar::monitor($monitorKey, $schedule);
             });
         });
     }
@@ -224,7 +231,7 @@ class CronRadarServiceProvider extends ServiceProvider
                         $scheduleExpression = $event->expression ?? null;
                         \CronRadar\CronRadar::sync($monitorKey, $scheduleExpression);
                     } catch (\Throwable $e) {
-                        Log::warning("CronRadar sync failed for {$monitorKey}: {$e->getMessage()}");
+                        Log::debug('CronRadar: Sync failed - ' . $e->getMessage());
                     }
                 }
             }
