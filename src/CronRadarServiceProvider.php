@@ -159,6 +159,7 @@ class CronRadarServiceProvider extends ServiceProvider
                 try {
                     // Only monitor successful executions
                     if ($this->exitCode !== 0) {
+                        Log::warning("CronRadar: Task failed with exit code {$this->exitCode}, skipping ping");
                         return;
                     }
 
@@ -170,6 +171,7 @@ class CronRadarServiceProvider extends ServiceProvider
 
                     // Monitor execution
                     \CronRadar\CronRadar::monitor($monitorKey, $schedule);
+                    Log::info("CronRadar: Pinged monitor '{$monitorKey}'");
                 } catch (\Throwable $e) {
                     Log::error('CronRadar: Monitor ping failed: ' . $e->getMessage());
                 }
@@ -230,8 +232,9 @@ class CronRadarServiceProvider extends ServiceProvider
                         $monitorKey = $event->detectMonitorKey();
                         $scheduleExpression = $event->expression ?? null;
                         \CronRadar\CronRadar::sync($monitorKey, $scheduleExpression);
+                        Log::info("CronRadar: Synced monitor '{$monitorKey}' ({$scheduleExpression})");
                     } catch (\Throwable $e) {
-                        Log::debug('CronRadar: Sync failed - ' . $e->getMessage());
+                        Log::error("CronRadar: Sync failed for '{$monitorKey}' - " . $e->getMessage());
                     }
                 }
             }
