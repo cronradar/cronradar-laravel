@@ -85,10 +85,73 @@ class CronRadarServiceProvider extends ServiceProvider
             return property_exists($this, '_cronRadarMonitored') && $this->_cronRadarMonitored === true;
         });
 
+        Event::macro('extractKeyFromClosureCode', function () {
+            /** @var \Illuminate\Console\Scheduling\Event $this */
+
+            if (!($this instanceof \Illuminate\Console\Scheduling\CallbackEvent)) {
+                return null;
+            }
+
+            try {
+                $reflection = new \ReflectionFunction($this->callback);
+                $filename = $reflection->getFileName();
+                $startLine = $reflection->getStartLine();
+                $endLine = $reflection->getEndLine();
+
+                if (!$filename || !$startLine || !$endLine) {
+                    return null;
+                }
+
+                // Read the source file
+                $file = new \SplFileObject($filename);
+                $file->seek($startLine - 1);
+
+                $code = '';
+                for ($i = $startLine; $i <= $endLine; $i++) {
+                    $code .= $file->current();
+                    $file->next();
+                }
+
+                // Extract meaningful strings from common patterns:
+
+                // Pattern 1: Log::info('Daily cleanup task executed')
+                if (preg_match('/Log::(?:info|debug|notice|warning|error|critical)\s*\(\s*[\'"]([^\'"]+)[\'"]\s*\)/', $code, $matches)) {
+                    $message = $matches[1];
+                    // Remove common suffixes like "executed", "completed", "task", etc.
+                    $message = preg_replace('/\s+(executed|completed|task|job|ran|finished|done)$/i', '', $message);
+                    return $this->normalizeKey($message);
+                }
+
+                // Pattern 2: Comments like "// Task 1: Daily cleanup"
+                if (preg_match('/\/\/.*?Task\s*\d*:\s*([^\n]+)/', $code, $matches)) {
+                    return $this->normalizeKey(trim($matches[1]));
+                }
+
+                // Pattern 3: Artisan::call('command:name')
+                if (preg_match('/Artisan::call\s*\(\s*[\'"]([^\'"]+)[\'"]\s*\)/', $code, $matches)) {
+                    return $this->normalizeKey($matches[1]);
+                }
+
+                // Pattern 4: Cache::forget, Cache::clear, DB::table, etc.
+                if (preg_match('/(?:Cache|DB|Queue|Storage|Mail)::\w+\s*\([\'"]([^\'"]+)/', $code, $matches)) {
+                    return $this->normalizeKey($matches[1]);
+                }
+
+                return null;
+            } catch (\Throwable $e) {
+                return null;
+            }
+        });
+
         Event::macro('detectMonitorKey', function () {
             /** @var \Illuminate\Console\Scheduling\Event $this */
 
             try {
+                // Priority 0: Check if custom key was set via ->monitor('custom-key')
+                if (property_exists($this, '_cronRadarCustomKey') && !empty($this->_cronRadarCustomKey)) {
+                    return $this->_cronRadarCustomKey;
+                }
+
                 // Priority 1: Extract from command name
                 if (!empty($this->command)) {
                     return $this->normalizeKey($this->extractCommandName($this->command));
@@ -99,12 +162,27 @@ class CronRadarServiceProvider extends ServiceProvider
                     return $this->normalizeKey($this->description);
                 }
 
-                // Priority 3: Generate from schedule expression (for closures)
-                if ($this->expression) {
-                    return 'task-' . $this->normalizeKey($this->expression);
+                // Priority 3: For closures, extract key from the closure code itself
+                if ($this instanceof \Illuminate\Console\Scheduling\CallbackEvent) {
+                    $extractedKey = $this->extractKeyFromClosureCode();
+                    if ($extractedKey) {
+                        return $extractedKey;
+                    }
                 }
 
-                // Fallback
+                // Priority 4: Fallback to line number for closures (unique identifier)
+                if ($this instanceof \Illuminate\Console\Scheduling\CallbackEvent) {
+                    try {
+                        $reflection = new \ReflectionFunction($this->callback);
+                        $line = $reflection->getStartLine();
+                        $file = basename($reflection->getFileName(), '.php');
+                        return $this->normalizeKey($file . '-line-' . $line);
+                    } catch (\Throwable $e) {
+                        // Continue to next fallback
+                    }
+                }
+
+                // Final fallback
                 return 'task-' . substr(md5(uniqid()), 0, 8);
             } catch (\Throwable $e) {
                 Log::error('CronRadar: Error detecting monitor key: ' . $e->getMessage());
@@ -116,14 +194,34 @@ class CronRadarServiceProvider extends ServiceProvider
             /** @var \Illuminate\Console\Scheduling\Event $this */
 
             // Extract command name from full artisan command string
-            // Example: "'/usr/bin/php' 'artisan' reports:generate" → "reports:generate"
-            if (preg_match('/artisan[\s]+([^\s]+)/', $command, $matches)) {
-                return $matches[1];
+            // Examples:
+            //   "C:\path\php.exe" "artisan" queue:work --stop-when-empty → queue-work
+            //   '/usr/bin/php' 'artisan' reports:generate --weekly → reports-generate
+            //   php artisan cache:clear → cache-clear
+
+            // Pattern 1: Match "artisan" followed by command name (with or without params)
+            if (preg_match('/artisan["\']?\s+([a-z0-9:_-]+)/i', $command, $matches)) {
+                $commandName = $matches[1];
+
+                // Convert colons to hyphens for better readability
+                // queue:work → queue-work
+                $commandName = str_replace(':', '-', $commandName);
+
+                return $commandName;
             }
 
-            // If it's just the command name (no path)
-            if (!str_contains($command, ' ')) {
-                return $command;
+            // Pattern 2: If it's a simple command without path
+            if (!str_contains($command, ' ') && !str_contains($command, '/') && !str_contains($command, '\\')) {
+                return str_replace(':', '-', $command);
+            }
+
+            // Pattern 3: Extract just the executable name as fallback
+            $parts = preg_split('/[\s\/\\\\]+/', $command);
+            foreach ($parts as $part) {
+                $cleaned = trim($part, '"\'');
+                if (!empty($cleaned) && !str_contains($cleaned, '.exe') && !str_contains($cleaned, 'php') && $cleaned !== 'artisan') {
+                    return str_replace(':', '-', $cleaned);
+                }
             }
 
             return basename($command);
@@ -160,6 +258,11 @@ class CronRadarServiceProvider extends ServiceProvider
             // Mark as monitored
             $this->_cronRadarMonitored = true;
 
+            // Store custom key if provided
+            if ($customKey !== null) {
+                $this->_cronRadarCustomKey = $customKey;
+            }
+
             return $this->after(function () use ($customKey) {
                 try {
                     // Only monitor successful executions
@@ -168,7 +271,7 @@ class CronRadarServiceProvider extends ServiceProvider
                         return;
                     }
 
-                    // Auto-detect monitor key if not provided
+                    // Use custom key if provided, otherwise auto-detect
                     $monitorKey = $customKey ?? $this->detectMonitorKey();
 
                     // Extract schedule from event
@@ -197,22 +300,30 @@ class CronRadarServiceProvider extends ServiceProvider
     }
 
     /**
-     * Register MonitorAll hook if enabled in config or macro
+     * Register MonitorAll hook using lazy monitoring approach
+     *
+     * TIMING ISSUE FIX: Console routes (routes/console.php) are loaded AFTER service providers boot,
+     * so we can't apply monitoring at boot time. Instead, we use a lazy approach that applies
+     * monitoring when schedule commands actually run (schedule:run, schedule:list, etc).
      */
     protected function registerMonitorAllHook(): void
     {
-        // Hook into the scheduler after all events are defined
-        $this->app->booted(function () {
-            try {
-                /** @var \Illuminate\Console\Scheduling\Schedule $schedule */
-                $schedule = $this->app->make(Schedule::class);
+        // Register a macro that applies monitoring lazily when first needed
+        Schedule::macro('applyMonitoringIfNeeded', function () {
+            /** @var \Illuminate\Console\Scheduling\Schedule $this */
 
+            // Check if we've already applied monitoring (run only once)
+            if (property_exists($this, '_cronRadarMonitoringApplied') && $this->_cronRadarMonitoringApplied) {
+                return;
+            }
+
+            try {
                 // Check if MonitorAll is enabled via macro OR config (macro takes priority)
-                $monitorAll = (property_exists($schedule, '_cronRadarMonitorAll') && $schedule->_cronRadarMonitorAll)
+                $monitorAll = (property_exists($this, '_cronRadarMonitorAll') && $this->_cronRadarMonitorAll)
                            || config('cronradar.monitor_all', false);
 
                 // Get all scheduled events
-                $events = $schedule->events();
+                $events = $this->events();
 
                 foreach ($events as $event) {
                     // Skip if event has explicit ->skipMonitor()
@@ -244,8 +355,35 @@ class CronRadarServiceProvider extends ServiceProvider
                         }
                     }
                 }
+
+                // Mark as applied so we don't run this again
+                $this->_cronRadarMonitoringApplied = true;
             } catch (\Throwable $e) {
-                Log::error('CronRadar: Boot hook failed - ' . $e->getMessage());
+                Log::error('CronRadar: Lazy monitoring failed - ' . $e->getMessage());
+            }
+        });
+
+        // Hook into schedule commands to apply monitoring before they execute
+        $this->app->booted(function () {
+            if ($this->app->runningInConsole()) {
+                try {
+                    // Listen for CommandStarting event to catch schedule commands
+                    $this->app['events']->listen('Illuminate\Console\Events\CommandStarting', function ($event) {
+                        // Check if it's a schedule-related command
+                        if (in_array($event->command, ['schedule:run', 'schedule:list', 'schedule:test', 'schedule:work'])) {
+                            try {
+                                /** @var \Illuminate\Console\Scheduling\Schedule $schedule */
+                                $schedule = $this->app->make(Schedule::class);
+                                $schedule->applyMonitoringIfNeeded();
+                            } catch (\Throwable $e) {
+                                Log::error('CronRadar: Failed to apply monitoring on command start - ' . $e->getMessage());
+                            }
+                        }
+                    });
+                } catch (\Throwable $e) {
+                    // Event system might not be available, that's ok
+                    Log::error('CronRadar: Failed to register CommandStarting listener - ' . $e->getMessage());
+                }
             }
         });
     }
