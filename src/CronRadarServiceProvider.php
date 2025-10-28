@@ -87,60 +87,9 @@ class CronRadarServiceProvider extends ServiceProvider
 
         Event::macro('extractKeyFromClosureCode', function () {
             /** @var \Illuminate\Console\Scheduling\Event $this */
-
-            if (!($this instanceof \Illuminate\Console\Scheduling\CallbackEvent)) {
-                return null;
-            }
-
-            try {
-                $reflection = new \ReflectionFunction($this->callback);
-                $filename = $reflection->getFileName();
-                $startLine = $reflection->getStartLine();
-                $endLine = $reflection->getEndLine();
-
-                if (!$filename || !$startLine || !$endLine) {
-                    return null;
-                }
-
-                // Read the source file
-                $file = new \SplFileObject($filename);
-                $file->seek($startLine - 1);
-
-                $code = '';
-                for ($i = $startLine; $i <= $endLine; $i++) {
-                    $code .= $file->current();
-                    $file->next();
-                }
-
-                // Extract meaningful strings from common patterns:
-
-                // Pattern 1: Log::info('Daily cleanup task executed')
-                if (preg_match('/Log::(?:info|debug|notice|warning|error|critical)\s*\(\s*[\'"]([^\'"]+)[\'"]\s*\)/', $code, $matches)) {
-                    $message = $matches[1];
-                    // Remove common suffixes like "executed", "completed", "task", etc.
-                    $message = preg_replace('/\s+(executed|completed|task|job|ran|finished|done)$/i', '', $message);
-                    return $this->normalizeKey($message);
-                }
-
-                // Pattern 2: Comments like "// Task 1: Daily cleanup"
-                if (preg_match('/\/\/.*?Task\s*\d*:\s*([^\n]+)/', $code, $matches)) {
-                    return $this->normalizeKey(trim($matches[1]));
-                }
-
-                // Pattern 3: Artisan::call('command:name')
-                if (preg_match('/Artisan::call\s*\(\s*[\'"]([^\'"]+)[\'"]\s*\)/', $code, $matches)) {
-                    return $this->normalizeKey($matches[1]);
-                }
-
-                // Pattern 4: Cache::forget, Cache::clear, DB::table, etc.
-                if (preg_match('/(?:Cache|DB|Queue|Storage|Mail)::\w+\s*\([\'"]([^\'"]+)/', $code, $matches)) {
-                    return $this->normalizeKey($matches[1]);
-                }
-
-                return null;
-            } catch (\Throwable $e) {
-                return null;
-            }
+            // Simplified: Just use file + line number for closures
+            // Parsing source code is overly complex and fragile
+            return null;
         });
 
         Event::macro('detectMonitorKey', function () {
@@ -249,14 +198,13 @@ class CronRadarServiceProvider extends ServiceProvider
     }
 
     /**
-     * Register ->monitor() macro on Event
+     * Register ->monitor() macro on Event (deprecated, but kept for backward compatibility)
+     * In MonitorAll mode, this just stores a custom key but doesn't affect whether task is monitored
      */
     protected function registerMonitorMacro(): void
     {
         Event::macro('monitor', function (?string $customKey = null) {
             /** @var \Illuminate\Console\Scheduling\Event $this */
-            // Mark as monitored
-            $this->_cronRadarMonitored = true;
 
             // Store custom key if provided
             if ($customKey !== null) {
@@ -305,6 +253,8 @@ class CronRadarServiceProvider extends ServiceProvider
      * TIMING ISSUE FIX: Console routes (routes/console.php) are loaded AFTER service providers boot,
      * so we can't apply monitoring at boot time. Instead, we use a lazy approach that applies
      * monitoring when schedule commands actually run (schedule:run, schedule:list, etc).
+     *
+     * MonitorAll mode is ALWAYS enabled. Use ->skipMonitor() to opt-out.
      */
     protected function registerMonitorAllHook(): void
     {
@@ -318,10 +268,6 @@ class CronRadarServiceProvider extends ServiceProvider
             }
 
             try {
-                // Check if MonitorAll is enabled via macro OR config (macro takes priority)
-                $monitorAll = (property_exists($this, '_cronRadarMonitorAll') && $this->_cronRadarMonitorAll)
-                           || config('cronradar.monitor_all', false);
-
                 // Get all scheduled events
                 $events = $this->events();
 
@@ -331,28 +277,18 @@ class CronRadarServiceProvider extends ServiceProvider
                         continue;
                     }
 
-                    // Determine if this event should be monitored
-                    $shouldMonitor = false;
-
-                    if ($monitorAll && !$event->isMonitored()) {
-                        // MonitorAll mode: auto-add monitoring to unmarked events
+                    // MonitorAll mode: Monitor all events unless explicitly skipped
+                    try {
+                        // Apply monitoring to this event
                         $event->monitor();
-                        $shouldMonitor = true;
-                    } elseif ($event->isMonitored()) {
-                        // Selective mode: event explicitly marked with ->monitor()
-                        $shouldMonitor = true;
-                    }
 
-                    // Sync all monitored events (both Selective and MonitorAll)
-                    if ($shouldMonitor) {
-                        try {
-                            $monitorKey = $event->detectMonitorKey();
-                            $scheduleExpression = $event->expression ?? null;
-                            \CronRadar\CronRadar::sync($monitorKey, $scheduleExpression);
-                            Log::info("CronRadar: Synced monitor '{$monitorKey}' ({$scheduleExpression})");
-                        } catch (\Throwable $e) {
-                            Log::error("CronRadar: Sync failed - " . $e->getMessage());
-                        }
+                        // Sync to CronRadar
+                        $monitorKey = $event->detectMonitorKey();
+                        $scheduleExpression = $event->expression ?? null;
+                        \CronRadar\CronRadar::sync($monitorKey, $scheduleExpression);
+                        Log::info("CronRadar: Synced monitor '{$monitorKey}' ({$scheduleExpression})");
+                    } catch (\Throwable $e) {
+                        Log::error("CronRadar: Sync failed - " . $e->getMessage());
                     }
                 }
 
