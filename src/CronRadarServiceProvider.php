@@ -211,25 +211,38 @@ class CronRadarServiceProvider extends ServiceProvider
                 $this->_cronRadarCustomKey = $customKey;
             }
 
-            return $this->after(function () use ($customKey) {
+            // Add before callback for lifecycle tracking (job start)
+            $this->before(function () use ($customKey) {
                 try {
-                    // Only monitor successful executions
-                    if ($this->exitCode !== 0) {
-                        Log::warning("CronRadar: Task failed with exit code {$this->exitCode}, skipping ping");
-                        return;
-                    }
-
                     // Use custom key if provided, otherwise auto-detect
                     $monitorKey = $customKey ?? $this->detectMonitorKey();
 
-                    // Extract schedule from event
-                    $schedule = $this->expression ?? null;
-
-                    // Monitor execution
-                    \CronRadar\CronRadar::monitor($monitorKey, $schedule);
-                    Log::info("CronRadar: Pinged monitor '{$monitorKey}'");
+                    // Signal job start for lifecycle tracking
+                    \CronRadar\CronRadar::startJob($monitorKey);
+                    Log::info("CronRadar: Started job '{$monitorKey}'");
                 } catch (\Throwable $e) {
-                    Log::error('CronRadar: Monitor ping failed: ' . $e->getMessage());
+                    Log::error('CronRadar: StartJob failed: ' . $e->getMessage());
+                }
+            });
+
+            // Add after callback for lifecycle tracking (job complete or fail)
+            return $this->after(function () use ($customKey) {
+                try {
+                    // Use custom key if provided, otherwise auto-detect
+                    $monitorKey = $customKey ?? $this->detectMonitorKey();
+
+                    // Report success or failure
+                    if ($this->exitCode !== 0) {
+                        // Signal job failure for immediate alert
+                        \CronRadar\CronRadar::failJob($monitorKey, "Exit code: {$this->exitCode}");
+                        Log::warning("CronRadar: Failed job '{$monitorKey}' with exit code {$this->exitCode}");
+                    } else {
+                        // Signal job completion for lifecycle tracking
+                        \CronRadar\CronRadar::completeJob($monitorKey);
+                        Log::info("CronRadar: Completed job '{$monitorKey}'");
+                    }
+                } catch (\Throwable $e) {
+                    Log::error('CronRadar: Lifecycle tracking failed: ' . $e->getMessage());
                 }
             });
         });
@@ -285,7 +298,7 @@ class CronRadarServiceProvider extends ServiceProvider
                         // Sync to CronRadar
                         $monitorKey = $event->detectMonitorKey();
                         $scheduleExpression = $event->expression ?? null;
-                        \CronRadar\CronRadar::sync($monitorKey, $scheduleExpression);
+                        \CronRadar\CronRadar::syncMonitor($monitorKey, $scheduleExpression);
                         Log::info("CronRadar: Synced monitor '{$monitorKey}' ({$scheduleExpression})");
                     } catch (\Throwable $e) {
                         Log::error("CronRadar: Sync failed - " . $e->getMessage());
