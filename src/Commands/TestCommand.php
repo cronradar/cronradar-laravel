@@ -28,14 +28,14 @@ class TestCommand extends Command
     {
         $monitorKey = $this->argument('monitor-key');
 
-        $this->info("Sending test ping to monitor: {$monitorKey}");
+        $this->info("Sending test monitor to monitor: {$monitorKey}");
 
         try {
-            CronRadar::ping($monitorKey);
-            $this->info('✓ Ping sent successfully!');
-            $this->line('Check your CronRadar dashboard to verify the ping was received.');
+            CronRadar::monitor($monitorKey);
+            $this->info('✓ Monitor sent successfully!');
+            $this->line('Check your CronRadar dashboard to verify the monitor was received.');
         } catch (\Throwable $e) {
-            $this->error('✗ Failed to send ping: ' . $e->getMessage());
+            $this->error('✗ Failed to send monitor: ' . $e->getMessage());
             return 1;
         }
 

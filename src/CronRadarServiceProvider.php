@@ -49,6 +49,12 @@ class CronRadarServiceProvider extends ServiceProvider
 
         // Register ->monitor() macro
         $this->registerMonitorMacro();
+
+        // Register Schedule::monitorAll() macro
+        $this->registerScheduleMacro();
+
+        // Register MonitorAll hook if enabled
+        $this->registerMonitorAllHook();
     }
 
     /**
@@ -56,6 +62,17 @@ class CronRadarServiceProvider extends ServiceProvider
      */
     protected function registerEventHelpers(): void
     {
+        Event::macro('skipMonitor', function () {
+            /** @var \Illuminate\Console\Scheduling\Event $this */
+            $this->_skipCronRadarMonitor = true;
+            return $this;
+        });
+
+        Event::macro('shouldSkipMonitor', function () {
+            /** @var \Illuminate\Console\Scheduling\Event $this */
+            return property_exists($this, '_skipCronRadarMonitor') && $this->_skipCronRadarMonitor === true;
+        });
+
         Event::macro('detectMonitorKey', function () {
             /** @var \Illuminate\Console\Scheduling\Event $this */
 
@@ -132,9 +149,74 @@ class CronRadarServiceProvider extends ServiceProvider
                 // Extract schedule from event
                 $schedule = $this->expression ?? null;
 
-                // Ping CronRadar on success
-                \CronRadar\CronRadar::ping($monitorKey, $schedule);
+                // Monitor CronRadar on success
+                \CronRadar\CronRadar::monitor($monitorKey, $schedule);
             });
+        });
+    }
+
+    /**
+     * Register Schedule::monitorAll() macro
+     */
+    protected function registerScheduleMacro(): void
+    {
+        Schedule::macro('monitorAll', function () {
+            /** @var \Illuminate\Console\Scheduling\Schedule $this */
+            $this->_cronRadarMonitorAll = true;
+            return $this;
+        });
+    }
+
+    /**
+     * Register MonitorAll hook if enabled in config or macro
+     */
+    protected function registerMonitorAllHook(): void
+    {
+        // Hook into the scheduler after all events are defined
+        $this->app->booted(function () {
+            /** @var \Illuminate\Console\Scheduling\Schedule $schedule */
+            $schedule = $this->app->make(Schedule::class);
+
+            // Check if MonitorAll is enabled via macro OR config (macro takes priority)
+            $monitorAll = (property_exists($schedule, '_cronRadarMonitorAll') && $schedule->_cronRadarMonitorAll)
+                       || config('cronradar.monitor_all', false);
+
+            // If neither macro nor config enabled, skip auto-monitoring
+            if (!$monitorAll) {
+                return;
+            }
+
+            // Get all scheduled events
+            $events = $schedule->events();
+
+            foreach ($events as $event) {
+                // Skip if event has explicit ->skipMonitor()
+                if ($event->shouldSkipMonitor()) {
+                    continue;
+                }
+
+                // Check if event already has monitoring callback from ->monitor()
+                // (This is a heuristic - we check if callback list contains CronRadar::monitor)
+                $alreadyMonitored = false;
+                foreach ($event->afterCallbacks ?? [] as $callback) {
+                    $callbackString = serialize($callback);
+                    if (str_contains($callbackString, 'CronRadar') || str_contains($callbackString, 'monitor')) {
+                        $alreadyMonitored = true;
+                        break;
+                    }
+                }
+
+                if ($alreadyMonitored) {
+                    continue;
+                }
+
+                // Auto-add monitoring
+                $event->then(function () use ($event) {
+                    $monitorKey = $event->detectMonitorKey();
+                    $schedule = $event->expression ?? null;
+                    \CronRadar\CronRadar::monitor($monitorKey, $schedule);
+                });
+            }
         });
     }
 }
