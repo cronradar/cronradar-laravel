@@ -8,6 +8,7 @@ use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Log;
 use CronRadar\Laravel\Commands\ListCommand;
 use CronRadar\Laravel\Commands\TestCommand;
+use CronRadar\Laravel\Commands\SyncCommand;
 
 class CronRadarServiceProvider extends ServiceProvider
 {
@@ -41,6 +42,7 @@ class CronRadarServiceProvider extends ServiceProvider
             $this->commands([
                 ListCommand::class,
                 TestCommand::class,
+                SyncCommand::class,
             ]);
         }
 
@@ -71,6 +73,11 @@ class CronRadarServiceProvider extends ServiceProvider
         Event::macro('shouldSkipMonitor', function () {
             /** @var \Illuminate\Console\Scheduling\Event $this */
             return property_exists($this, '_skipCronRadarMonitor') && $this->_skipCronRadarMonitor === true;
+        });
+
+        Event::macro('isMonitored', function () {
+            /** @var \Illuminate\Console\Scheduling\Event $this */
+            return property_exists($this, '_cronRadarMonitored') && $this->_cronRadarMonitored === true;
         });
 
         Event::macro('detectMonitorKey', function () {
@@ -142,14 +149,22 @@ class CronRadarServiceProvider extends ServiceProvider
     {
         Event::macro('monitor', function (?string $customKey = null) {
             /** @var \Illuminate\Console\Scheduling\Event $this */
-            return $this->then(function () use ($customKey) {
+            // Mark as monitored
+            $this->_cronRadarMonitored = true;
+
+            return $this->after(function () use ($customKey) {
+                // Only monitor successful executions
+                if ($this->exitCode !== 0) {
+                    return;
+                }
+
                 // Auto-detect monitor key if not provided
                 $monitorKey = $customKey ?? $this->detectMonitorKey();
 
                 // Extract schedule from event
                 $schedule = $this->expression ?? null;
 
-                // Monitor CronRadar on success
+                // Monitor execution
                 \CronRadar\CronRadar::monitor($monitorKey, $schedule);
             });
         });
@@ -181,11 +196,6 @@ class CronRadarServiceProvider extends ServiceProvider
             $monitorAll = (property_exists($schedule, '_cronRadarMonitorAll') && $schedule->_cronRadarMonitorAll)
                        || config('cronradar.monitor_all', false);
 
-            // If neither macro nor config enabled, skip auto-monitoring
-            if (!$monitorAll) {
-                return;
-            }
-
             // Get all scheduled events
             $events = $schedule->events();
 
@@ -195,27 +205,28 @@ class CronRadarServiceProvider extends ServiceProvider
                     continue;
                 }
 
-                // Check if event already has monitoring callback from ->monitor()
-                // (This is a heuristic - we check if callback list contains CronRadar::monitor)
-                $alreadyMonitored = false;
-                foreach ($event->afterCallbacks ?? [] as $callback) {
-                    $callbackString = serialize($callback);
-                    if (str_contains($callbackString, 'CronRadar') || str_contains($callbackString, 'monitor')) {
-                        $alreadyMonitored = true;
-                        break;
+                // Determine if this event should be monitored
+                $shouldMonitor = false;
+
+                if ($monitorAll && !$event->isMonitored()) {
+                    // MonitorAll mode: auto-add monitoring to unmarked events
+                    $event->monitor();
+                    $shouldMonitor = true;
+                } elseif ($event->isMonitored()) {
+                    // Selective mode: event explicitly marked with ->monitor()
+                    $shouldMonitor = true;
+                }
+
+                // Sync all monitored events (both Selective and MonitorAll)
+                if ($shouldMonitor) {
+                    try {
+                        $monitorKey = $event->detectMonitorKey();
+                        $scheduleExpression = $event->expression ?? null;
+                        \CronRadar\CronRadar::sync($monitorKey, $scheduleExpression);
+                    } catch (\Throwable $e) {
+                        Log::warning("CronRadar sync failed for {$monitorKey}: {$e->getMessage()}");
                     }
                 }
-
-                if ($alreadyMonitored) {
-                    continue;
-                }
-
-                // Auto-add monitoring
-                $event->then(function () use ($event) {
-                    $monitorKey = $event->detectMonitorKey();
-                    $schedule = $event->expression ?? null;
-                    \CronRadar\CronRadar::monitor($monitorKey, $schedule);
-                });
             }
         });
     }
