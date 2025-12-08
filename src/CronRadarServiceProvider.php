@@ -32,31 +32,36 @@ class CronRadarServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Publish config
-        $this->publishes([
-            __DIR__.'/../config/cronradar.php' => config_path('cronradar.php'),
-        ], 'cronradar-config');
+        try {
+            // Publish config
+            $this->publishes([
+                __DIR__.'/../config/cronradar.php' => config_path('cronradar.php'),
+            ], 'cronradar-config');
 
-        // Register commands
-        if ($this->app->runningInConsole()) {
-            $this->commands([
-                ListCommand::class,
-                TestCommand::class,
-                SyncCommand::class,
-            ]);
+            // Register commands
+            if ($this->app->runningInConsole()) {
+                $this->commands([
+                    ListCommand::class,
+                    TestCommand::class,
+                    SyncCommand::class,
+                ]);
+            }
+
+            // Register event helper macros
+            $this->registerEventHelpers();
+
+            // Register ->monitor() macro
+            $this->registerMonitorMacro();
+
+            // Register Schedule::monitorAll() macro
+            $this->registerScheduleMacro();
+
+            // Register MonitorAll hook if enabled
+            $this->registerMonitorAllHook();
+        } catch (\Throwable $e) {
+            // Never break the application
+            Log::error('CronRadar: ServiceProvider boot failed - ' . $e->getMessage());
         }
-
-        // Register event helper macros
-        $this->registerEventHelpers();
-
-        // Register ->monitor() macro
-        $this->registerMonitorMacro();
-
-        // Register Schedule::monitorAll() macro
-        $this->registerScheduleMacro();
-
-        // Register MonitorAll hook if enabled
-        $this->registerMonitorAllHook();
     }
 
     /**
@@ -198,45 +203,49 @@ class CronRadarServiceProvider extends ServiceProvider
     {
         // Hook into the scheduler after all events are defined
         $this->app->booted(function () {
-            /** @var \Illuminate\Console\Scheduling\Schedule $schedule */
-            $schedule = $this->app->make(Schedule::class);
+            try {
+                /** @var \Illuminate\Console\Scheduling\Schedule $schedule */
+                $schedule = $this->app->make(Schedule::class);
 
-            // Check if MonitorAll is enabled via macro OR config (macro takes priority)
-            $monitorAll = (property_exists($schedule, '_cronRadarMonitorAll') && $schedule->_cronRadarMonitorAll)
-                       || config('cronradar.monitor_all', false);
+                // Check if MonitorAll is enabled via macro OR config (macro takes priority)
+                $monitorAll = (property_exists($schedule, '_cronRadarMonitorAll') && $schedule->_cronRadarMonitorAll)
+                           || config('cronradar.monitor_all', false);
 
-            // Get all scheduled events
-            $events = $schedule->events();
+                // Get all scheduled events
+                $events = $schedule->events();
 
-            foreach ($events as $event) {
-                // Skip if event has explicit ->skipMonitor()
-                if ($event->shouldSkipMonitor()) {
-                    continue;
-                }
+                foreach ($events as $event) {
+                    // Skip if event has explicit ->skipMonitor()
+                    if ($event->shouldSkipMonitor()) {
+                        continue;
+                    }
 
-                // Determine if this event should be monitored
-                $shouldMonitor = false;
+                    // Determine if this event should be monitored
+                    $shouldMonitor = false;
 
-                if ($monitorAll && !$event->isMonitored()) {
-                    // MonitorAll mode: auto-add monitoring to unmarked events
-                    $event->monitor();
-                    $shouldMonitor = true;
-                } elseif ($event->isMonitored()) {
-                    // Selective mode: event explicitly marked with ->monitor()
-                    $shouldMonitor = true;
-                }
+                    if ($monitorAll && !$event->isMonitored()) {
+                        // MonitorAll mode: auto-add monitoring to unmarked events
+                        $event->monitor();
+                        $shouldMonitor = true;
+                    } elseif ($event->isMonitored()) {
+                        // Selective mode: event explicitly marked with ->monitor()
+                        $shouldMonitor = true;
+                    }
 
-                // Sync all monitored events (both Selective and MonitorAll)
-                if ($shouldMonitor) {
-                    try {
-                        $monitorKey = $event->detectMonitorKey();
-                        $scheduleExpression = $event->expression ?? null;
-                        \CronRadar\CronRadar::sync($monitorKey, $scheduleExpression);
-                        Log::info("CronRadar: Synced monitor '{$monitorKey}' ({$scheduleExpression})");
-                    } catch (\Throwable $e) {
-                        Log::error("CronRadar: Sync failed for '{$monitorKey}' - " . $e->getMessage());
+                    // Sync all monitored events (both Selective and MonitorAll)
+                    if ($shouldMonitor) {
+                        try {
+                            $monitorKey = $event->detectMonitorKey();
+                            $scheduleExpression = $event->expression ?? null;
+                            \CronRadar\CronRadar::sync($monitorKey, $scheduleExpression);
+                            Log::info("CronRadar: Synced monitor '{$monitorKey}' ({$scheduleExpression})");
+                        } catch (\Throwable $e) {
+                            Log::error("CronRadar: Sync failed - " . $e->getMessage());
+                        }
                     }
                 }
+            } catch (\Throwable $e) {
+                Log::error('CronRadar: Boot hook failed - ' . $e->getMessage());
             }
         });
     }
