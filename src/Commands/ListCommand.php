@@ -38,11 +38,14 @@ class ListCommand extends Command
 
         $rows = [];
         foreach ($events as $event) {
-            $command = $event->command ?? $event->description ?? 'unknown';
+            // Use the same detectMonitorKey() logic from the macro
+            $monitorKey = $event->detectMonitorKey();
+
+            $command = $event->command ?? $event->description ?? 'Closure';
             $expression = $event->expression;
 
             $rows[] = [
-                $this->generateMonitorKey($command),
+                $monitorKey,
                 $command,
                 $expression,
             ];
@@ -51,27 +54,9 @@ class ListCommand extends Command
         $this->table(['Monitor Key', 'Command', 'Schedule'], $rows);
 
         $this->newLine();
-        $this->line('To start monitoring, add ->pingCronRadar(\'monitor-key\') to your scheduled tasks.');
-        $this->line('Or run <info>php artisan cronradar:discover</info> to auto-register all tasks.');
+        $this->line('Monitor keys are auto-generated from task commands/closures.');
+        $this->line('Use <info>Schedule::monitorAll()</info> in routes/console.php to enable monitoring.');
 
         return 0;
-    }
-
-    /**
-     * Generate a monitor key from a command string
-     */
-    private function generateMonitorKey(string $command): string
-    {
-        // Remove quotes and artisan prefix
-        $key = trim($command, "'\"");
-        $key = str_replace("'artisan' ", '', $key);
-        $key = str_replace('"artisan" ', '', $key);
-
-        // Convert to kebab-case
-        $key = preg_replace('/[^a-zA-Z0-9]+/', '-', $key);
-        $key = trim($key, '-');
-        $key = strtolower($key);
-
-        return $key;
     }
 }
