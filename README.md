@@ -35,8 +35,6 @@ Add to `.env`:
 CRONRADAR_API_KEY=ck_app_xxxxx_yyyyy
 ```
 
-Get your API key from [cronradar.com/dashboard](https://cronradar.com/dashboard)
-
 ## Custom Monitor Keys
 
 ```php
@@ -54,11 +52,11 @@ If no key provided, auto-detects from command name.
 
 ## Links
 
-- 📦 [Packagist](https://packagist.org/packages/cronradar/laravel)
-- 🐛 [Issues](https://github.com/cronradar/cronradar-laravel/issues)
-- 📚 [Documentation](https://cronradar.com/docs)
-- ✉️ support@cronradar.com
+- [Documentation](https://docs.cronradar.com)
+- [Packagist](https://packagist.org/packages/cronradar/laravel)
+
+**See also:** [CronRadar PHP SDK](https://packagist.org/packages/cronradar/php)
 
 ## License
 
-Proprietary - © 2025 CronRadar. All rights reserved.
+© 2025 [CronRadar](https://cronradar.com) - See [LICENSE](./LICENSE)
