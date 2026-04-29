@@ -44,7 +44,7 @@ class SyncCommand extends Command
             $scheduleExpression = $event->expression;
 
             try {
-                CronRadar::sync($monitorKey, $scheduleExpression);
+                CronRadar::syncMonitor($monitorKey, $scheduleExpression);
                 $this->line("  ✓ Synced: {$monitorKey} ({$scheduleExpression})");
                 $monitoredCount++;
             } catch (\Throwable $e) {

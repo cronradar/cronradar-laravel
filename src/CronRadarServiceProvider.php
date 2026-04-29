@@ -188,9 +188,9 @@ class CronRadarServiceProvider extends ServiceProvider
             // Remove leading/trailing hyphens
             $key = trim($key, '-');
 
-            // Truncate if too long
-            if (strlen($key) > 64) {
-                $key = substr($key, 0, 64);
+            // Truncate at the SDK-wide max key length
+            if (strlen($key) > \CronRadar\Constants::MAX_MONITOR_KEY_LENGTH) {
+                $key = substr($key, 0, \CronRadar\Constants::MAX_MONITOR_KEY_LENGTH);
             }
 
             return $key;
