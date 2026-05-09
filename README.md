@@ -79,21 +79,7 @@ Schedule::command('reports:generate')
     ->monitor('critical-daily-report');
 ```
 
-### Override grace period for a specific task
-
-```php
-Schedule::command('large:sync')
-    ->hourly()
-    ->monitor(gracePeriod: 600);   // 10-min grace instead of default 60s
-```
-
-You can combine `monitor()` and `monitor()`-with-key — the named-argument form is the canonical API:
-
-```php
-Schedule::command('reports:generate')
-    ->daily()
-    ->monitor(key: 'critical-daily-report', gracePeriod: 300);
-```
+Grace period is configured per-monitor on CronRadar (default 60 seconds; set via the dashboard) — it is not a per-task argument on the Laravel side.
 
 ## Reference
 
@@ -104,7 +90,9 @@ The package adds these methods to Laravel's `Illuminate\Console\Scheduling\Event
 | Method | Purpose |
 |---|---|
 | `->skipMonitor()` | Exclude this task from monitoring. Returns `$this` for chaining. |
-| `->monitor(?string $key = null, ?int $gracePeriod = null)` | Override key or grace period. Returns `$this` for chaining. |
+| `->monitor(?string $customKey = null)` | Override the monitor key for this task. Returns `$this` for chaining. |
+| `->shouldSkipMonitor()` | Returns true if `->skipMonitor()` was applied. |
+| `->isMonitored()` | Returns true if the task will be monitored. |
 
 ### What gets monitored
 
