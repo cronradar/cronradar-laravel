@@ -284,26 +284,39 @@ class CronRadarServiceProvider extends ServiceProvider
                 // Get all scheduled events
                 $events = $this->events();
 
+                // Reconcile the COMPLETE current set in one request (the authoritative
+                // set), so dead-man coverage exists for tasks that have not run yet and
+                // drift is reflected. schedule:run fires every minute, so this doubles as
+                // the heartbeat.
+                $monitors = [];
+
                 foreach ($events as $event) {
                     // Skip if event has explicit ->skipMonitor()
                     if ($event->shouldSkipMonitor()) {
                         continue;
                     }
 
-                    // MonitorAll mode: Monitor all events unless explicitly skipped
                     try {
-                        // Apply monitoring to this event
+                        // Attach lifecycle tracking (execution telemetry)
                         $event->monitor();
 
-                        // Sync to CronRadar
                         $monitorKey = $event->detectMonitorKey();
                         $scheduleExpression = $event->expression ?? null;
-                        \CronRadar\CronRadar::syncMonitor($monitorKey, $scheduleExpression);
-                        Log::info("CronRadar: Synced monitor '{$monitorKey}' ({$scheduleExpression})");
+                        if (empty($monitorKey) || empty($scheduleExpression)) {
+                            continue;
+                        }
+
+                        $monitors[] = [
+                            'key' => $monitorKey,
+                            'schedule' => $scheduleExpression,
+                        ];
                     } catch (\Throwable $e) {
-                        Log::error("CronRadar: Sync failed - " . $e->getMessage());
+                        Log::error("CronRadar: Failed to prepare monitor - " . $e->getMessage());
                     }
                 }
+
+                \CronRadar\CronRadar::syncMonitors($monitors, 'laravel');
+                Log::info("CronRadar: Reconciled " . count($monitors) . " monitor(s)");
 
                 // Mark as applied so we don't run this again
                 $this->_cronRadarMonitoringApplied = true;

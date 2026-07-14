@@ -9,21 +9,17 @@ use CronRadar\CronRadar;
 class SyncCommand extends Command
 {
     protected $signature = 'cronradar:sync';
-    protected $description = 'Manually sync monitored tasks (auto-syncs on boot by default)';
+    protected $description = 'Reconcile scheduled tasks with CronRadar (run on deploy for immediate coverage; schedule:run also reconciles every minute)';
 
     public function handle(): int
     {
         $schedule = $this->laravel->make(Schedule::class);
         $events = $schedule->events();
 
-        // Check if MonitorAll is enabled
-        $monitorAll = (property_exists($schedule, '_cronRadarMonitorAll') && $schedule->_cronRadarMonitorAll)
-                   || config('cronradar.monitor_all', false);
-
-        $monitoredCount = 0;
+        $monitors = [];
         $skippedCount = 0;
 
-        $this->info('Syncing scheduled tasks with CronRadar...');
+        $this->info('Reconciling scheduled tasks with CronRadar...');
         $this->newLine();
 
         foreach ($events as $event) {
@@ -33,27 +29,25 @@ class SyncCommand extends Command
                 continue;
             }
 
-            // Include if: explicitly monitored OR MonitorAll is enabled
-            $shouldSync = $event->isMonitored() || $monitorAll;
-
-            if (!$shouldSync) {
-                continue;
-            }
-
             $monitorKey = $event->detectMonitorKey();
             $scheduleExpression = $event->expression;
 
-            try {
-                CronRadar::syncMonitor($monitorKey, $scheduleExpression);
-                $this->line("  ✓ Synced: {$monitorKey} ({$scheduleExpression})");
-                $monitoredCount++;
-            } catch (\Throwable $e) {
-                $this->error("  ✗ Failed: {$monitorKey} - {$e->getMessage()}");
+            if (empty($monitorKey) || empty($scheduleExpression)) {
+                continue;
             }
+
+            $monitors[] = [
+                'key' => $monitorKey,
+                'schedule' => $scheduleExpression,
+            ];
+            $this->line("  • {$monitorKey} ({$scheduleExpression})");
         }
 
+        // Reconcile the complete set in a single request
+        CronRadar::syncMonitors($monitors, 'laravel');
+
         $this->newLine();
-        $this->info("Synced {$monitoredCount} monitors");
+        $this->info("Reconciled " . count($monitors) . " monitors");
 
         if ($skippedCount > 0) {
             $this->line("Skipped {$skippedCount} tasks with ->skipMonitor()");

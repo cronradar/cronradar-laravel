@@ -1,6 +1,6 @@
 {
     "name": "cronradar/laravel",
-    "version": "0.0.9",
+    "version": "0.1.0",
     "description": "Monitor Laravel scheduled tasks with selective or MonitorAll modes. Auto-discovers keys and schedules.",
     "keywords": ["laravel", "cron", "monitoring", "scheduler", "task", "scheduled", "artisan"],
     "license": "proprietary",
