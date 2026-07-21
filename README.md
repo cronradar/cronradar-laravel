@@ -2,7 +2,7 @@
 
 Auto-discovery for the Laravel scheduler. Every task added to your `app/Console/Kernel.php` (or `routes/console.php` in Laravel 11+) is monitored automatically. Opt out per task with `->skipMonitor()`.
 
-Built on top of the [`cronradar/cronradar`](https://packagist.org/packages/cronradar/cronradar) base SDK.
+Built on top of the [`cronradar/php`](https://packagist.org/packages/cronradar/php) base SDK.
 
 ## Install
 
@@ -10,7 +10,7 @@ Built on top of the [`cronradar/cronradar`](https://packagist.org/packages/cronr
 composer require cronradar/laravel
 ```
 
-PHP 8.1+. Laravel 10, 11, and 12 supported. Auto-discovery via Laravel's package manifest — no `config/app.php` registration required.
+PHP 8.0+. Laravel 10, 11, and 12 supported. Auto-discovery via Laravel's package manifest — no `config/app.php` registration required.
 
 ## Setup
 
@@ -215,7 +215,7 @@ The package becomes a no-op; your scheduled-task assertions and `Bus::fake()` se
 - **OpenAPI spec:** [api.cronradar.com/swagger/v1/swagger.json](https://api.cronradar.com/swagger/v1/swagger.json)
 - **Packagist:** [packagist.org/packages/cronradar/laravel](https://packagist.org/packages/cronradar/laravel)
 - **GitHub:** [github.com/cronradar/cronradar-laravel](https://github.com/cronradar/cronradar-laravel)
-- **Base SDK:** [packagist.org/packages/cronradar/cronradar](https://packagist.org/packages/cronradar/cronradar)
+- **Base SDK:** [packagist.org/packages/cronradar/php](https://packagist.org/packages/cronradar/php)
 - **Support:** support@cronradar.com
 
 ## License
