@@ -22,6 +22,8 @@ CRONRADAR_API_KEY=ck_app_xxxxxxxxxxxxxxxxxxxx
 
 Get the API key from the CronRadar dashboard at [app.cronradar.com](https://app.cronradar.com) under your application's settings. API keys have the form `ck_app_<random>`.
 
+Create a separate CronRadar application and API key for production, staging, and development. Keep production secrets in the deployment platform rather than a committed `.env` file, and never reuse a production key outside production.
+
 (Optional) publish the config file if you want to override defaults:
 
 ```bash
@@ -208,11 +210,27 @@ Set `CRONRADAR_ENABLED=false` in `phpunit.xml`:
 
 The package becomes a no-op; your scheduled-task assertions and `Bus::fake()` setups behave exactly as without the package.
 
+## Verification
+
+Run these commands in the deployed application environment:
+
+```bash
+php artisan cronradar:list
+php artisan cronradar:sync
+php artisan cronradar:test
+```
+
+Then confirm the intended CronRadar application shows the scheduled task and a terminal execution result. Use the guided reliability drill for notification delivery; do not make a production schedule fail for testing.
+
+## Migration
+
+When replacing manual `CronRadar::monitor()` calls, keep each existing monitor key with `->monitorAs('existing-key')`, deploy, and confirm discovery plus one terminal run. Remove the old heartbeat only after the framework lifecycle is visible so history remains continuous and duplicate terminal events are avoided.
+
 ## Links
 
 - **Documentation:** [docs.cronradar.com](https://docs.cronradar.com)
 - **Agent-friendly index:** [docs.cronradar.com/llms.txt](https://docs.cronradar.com/llms.txt)
-- **OpenAPI spec:** [api.cronradar.com/swagger/v1/swagger.json](https://api.cronradar.com/swagger/v1/swagger.json)
+- **OpenAPI spec:** [docs.cronradar.com/openapi.json](https://docs.cronradar.com/openapi.json)
 - **Packagist:** [packagist.org/packages/cronradar/laravel](https://packagist.org/packages/cronradar/laravel)
 - **GitHub:** [github.com/cronradar/cronradar-laravel](https://github.com/cronradar/cronradar-laravel)
 - **Base SDK:** [packagist.org/packages/cronradar/php](https://packagist.org/packages/cronradar/php)
